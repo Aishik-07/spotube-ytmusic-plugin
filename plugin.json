@@ -1,0 +1,12 @@
+{
+  "type": "metadata",
+  "version": "1.0.0",
+  "name": "youtube-music",
+  "author": "Community",
+  "description": "Full YouTube Music metadata provider for Spotube. Browse and search the entire YouTube Music catalog. Sign in with your Google account to access your liked songs, playlists, albums, and more.",
+  "entryPoint": "YoutubeMusic",
+  "apis": ["webview", "localstorage"],
+  "abilities": ["authentication"],
+  "repository": "https://github.com/your-username/spotube-ytmusic",
+  "pluginApiVersion": "1.0.0"
+}
