@@ -1,0 +1,361 @@
+// ─────────────────────────────────────────────────────────────────────────────
+//  src/utils/parser.ht
+//  Helpers that convert YouTube Music InnerTube responses into the
+//  Spotube plugin model format (plain Map / List values).
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Safe nested-map accessor ─────────────────────────────────────────────────
+fun safeGet(obj, key) {
+  if (obj == null) return null
+  return obj[key]
+}
+
+// ── Concatenate a YouTube "runs" array into one plain string ─────────────────
+fun textFromRuns(runs) {
+  if (runs == null || runs.length == 0) return null
+  var out = ""
+  for (var run in runs) {
+    var t = run["text"]
+    if (t != null) out = out + t
+  }
+  if (out == "") return null
+  return out
+}
+
+// ── Convert thumbnail wrapper → list of {url, width, height} maps ────────────
+fun parseThumbnails(wrapper) {
+  if (wrapper == null) return []
+
+  var inner = safeGet(wrapper, "musicThumbnailRenderer")
+  if (inner == null) inner = wrapper
+
+  var thumbObj = safeGet(inner, "thumbnail")
+  if (thumbObj == null) return []
+
+  var list = safeGet(thumbObj, "thumbnails")
+  if (list == null || list.length == 0) return []
+
+  var result = []
+  for (var t in list) {
+    result.add({
+      "url":    t["url"]    ?? "",
+      "width":  t["width"]  ?? 226,
+      "height": t["height"] ?? 226
+    })
+  }
+  return result
+}
+
+// ── "m:ss" or "h:mm:ss" → milliseconds ──────────────────────────────────────
+fun durationToMs(s) {
+  if (s == null || s == "") return 0
+  var trimmed = s.trim()
+  var parts   = trimmed.split(":")
+  if (parts.length == 2) {
+    var m = int.parse(parts[0])
+    var sec = int.parse(parts[1])
+    return (m * 60 + sec) * 1000
+  }
+  if (parts.length == 3) {
+    var h   = int.parse(parts[0])
+    var m   = int.parse(parts[1])
+    var sec = int.parse(parts[2])
+    return (h * 3600 + m * 60 + sec) * 1000
+  }
+  return 0
+}
+
+// ── Pull a browseId out of the first navigable run ──────────────────────────
+fun extractBrowseId(runs) {
+  if (runs == null || runs.length == 0) return null
+  for (var run in runs) {
+    var ep  = safeGet(run, "navigationEndpoint")
+    if (ep == null) continue
+    var be  = safeGet(ep, "browseEndpoint")
+    if (be == null) continue
+    var bid = be["browseId"]
+    if (bid != null) return bid
+  }
+  return null
+}
+
+// ── Extract videoId from overlay or playlistItemData ─────────────────────────
+fun extractVideoId(renderer) {
+  // 1) overlay → musicItemThumbnailOverlayRenderer → content → musicPlayButtonRenderer
+  var overlay = safeGet(renderer, "overlay")
+  if (overlay != null) {
+    var btn = safeGet(
+      safeGet(safeGet(overlay, "musicItemThumbnailOverlayRenderer"), "content"),
+      "musicPlayButtonRenderer"
+    )
+    if (btn != null) {
+      var we = safeGet(safeGet(btn, "playNavigationEndpoint"), "watchEndpoint")
+      if (we != null && we["videoId"] != null) return we["videoId"]
+    }
+  }
+  // 2) playlistItemData
+  var pid = safeGet(renderer, "playlistItemData")
+  if (pid != null && pid["videoId"] != null) return pid["videoId"]
+
+  return null
+}
+
+// ── Parse the second flex column of a musicResponsiveListItemRenderer ─────────
+//    Returns {artists, albumName, albumId, durationMs, year}
+fun parseMetaRuns(runs) {
+  var artists    = []
+  var albumName  = null
+  var albumId    = null
+  var durationMs = 0
+  var year       = null
+
+  if (runs == null) {
+    return {
+      "artists":    artists,
+      "albumName":  albumName,
+      "albumId":    albumId,
+      "durationMs": durationMs,
+      "year":       year
+    }
+  }
+
+  for (var run in runs) {
+    var text = run["text"]
+    if (text == null) continue
+    var trimmed = text.trim()
+    if (trimmed == "•" || trimmed == " • " || trimmed == "") continue
+
+    var ep  = safeGet(run, "navigationEndpoint")
+    if (ep != null) {
+      var be  = safeGet(ep, "browseEndpoint")
+      if (be != null) {
+        var bid = be["browseId"] ?? ""
+        if (bid.startsWith("UC") || bid.startsWith("MPLA")) {
+          // Artist channel
+          artists.add({
+            "id":   bid,
+            "name": trimmed,
+            "images": [],
+            "external_urls": {"youtube": "https://music.youtube.com/channel/${bid}"}
+          })
+        } else if (bid.startsWith("MPRE") || bid.startsWith("VLRD")) {
+          // Album / Release
+          albumId   = bid
+          albumName = trimmed
+        }
+      }
+    } else {
+      // No navigation → might be duration or year
+      if (trimmed.contains(":") && !trimmed.contains(" ")) {
+        durationMs = durationToMs(trimmed)
+      } else if (trimmed.length == 4) {
+        var parsed = int.parse(trimmed)
+        if (parsed > 1900 && parsed < 2100) year = trimmed
+      }
+    }
+  }
+
+  return {
+    "artists":    artists,
+    "albumName":  albumName,
+    "albumId":    albumId,
+    "durationMs": durationMs,
+    "year":       year
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Parse a Track from musicResponsiveListItemRenderer
+// ─────────────────────────────────────────────────────────────────────────────
+fun parseTrack(renderer) {
+  if (renderer == null) return null
+
+  var flexCols = safeGet(renderer, "flexColumns")
+  if (flexCols == null || flexCols.length == 0) return null
+
+  // ── Title (first column) ──
+  var col0      = safeGet(safeGet(flexCols[0], "musicResponsiveListItemFlexColumnRenderer"), "text")
+  var titleRuns = safeGet(col0, "runs")
+  var title     = textFromRuns(titleRuns)
+  if (title == null) return null
+
+  // ── Video ID ──
+  var videoId = extractVideoId(renderer)
+  if (videoId == null && titleRuns != null && titleRuns.length > 0) {
+    var we = safeGet(safeGet(titleRuns[0], "navigationEndpoint"), "watchEndpoint")
+    if (we != null) videoId = we["videoId"]
+  }
+  if (videoId == null) return null
+
+  // ── Metadata (second column) ──
+  var meta = {"artists": [], "albumName": null, "albumId": null, "durationMs": 0, "year": null}
+  if (flexCols.length > 1) {
+    var col1     = safeGet(safeGet(flexCols[1], "musicResponsiveListItemFlexColumnRenderer"), "text")
+    var metaRuns = safeGet(col1, "runs")
+    meta = parseMetaRuns(metaRuns)
+  }
+
+  var images = parseThumbnails(safeGet(renderer, "thumbnail"))
+
+  var album = null
+  if (meta["albumId"] != null) {
+    album = {
+      "id":          meta["albumId"],
+      "name":        meta["albumName"] ?? "Unknown Album",
+      "images":      images,
+      "release_date": null,
+      "external_urls": {"youtube": "https://music.youtube.com/browse/${meta["albumId"]}"}
+    }
+  }
+
+  return {
+    "id":          videoId,
+    "name":        title,
+    "duration_ms": meta["durationMs"] ?? 0,
+    "track_number": 1,
+    "disc_number":  1,
+    "artists":     meta["artists"],
+    "album":       album,
+    "images":      images,
+    "explicit":    false,
+    "popularity":  0,
+    "is_local":    false,
+    "uri":         "youtube:track:${videoId}",
+    "external_urls": {"youtube": "https://music.youtube.com/watch?v=${videoId}"}
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Parse an Album
+// ─────────────────────────────────────────────────────────────────────────────
+fun parseAlbum(renderer) {
+  if (renderer == null) return null
+
+  var flexCols = safeGet(renderer, "flexColumns")
+  if (flexCols == null || flexCols.length == 0) return null
+
+  var col0      = safeGet(safeGet(flexCols[0], "musicResponsiveListItemFlexColumnRenderer"), "text")
+                  ?? safeGet(safeGet(renderer, "title"), null)   // musicTwoRowItemRenderer
+  var titleRuns = safeGet(col0, "runs") ?? safeGet(safeGet(renderer, "title"), "runs")
+  var title     = textFromRuns(titleRuns)
+  if (title == null) return null
+
+  var browseId = extractBrowseId(titleRuns)
+  if (browseId == null) return null
+
+  var meta = {"artists": [], "albumName": null, "albumId": null, "durationMs": 0, "year": null}
+  if (flexCols.length > 1) {
+    var col1     = safeGet(safeGet(flexCols[1], "musicResponsiveListItemFlexColumnRenderer"), "text")
+    var metaRuns = safeGet(col1, "runs")
+    meta = parseMetaRuns(metaRuns)
+  } else {
+    // musicTwoRowItemRenderer stores subtitle separately
+    var subRuns = safeGet(safeGet(renderer, "subtitle"), "runs")
+    meta = parseMetaRuns(subRuns)
+  }
+
+  var images = parseThumbnails(
+    safeGet(renderer, "thumbnail") ?? safeGet(renderer, "thumbnailRenderer")
+  )
+
+  return {
+    "id":           browseId,
+    "name":         title,
+    "release_date": meta["year"],
+    "total_tracks": 0,
+    "images":       images,
+    "artists":      meta["artists"],
+    "album_type":   "album",
+    "external_urls": {"youtube": "https://music.youtube.com/browse/${browseId}"}
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Parse an Artist
+// ─────────────────────────────────────────────────────────────────────────────
+fun parseArtist(renderer) {
+  if (renderer == null) return null
+
+  var titleRuns = safeGet(safeGet(
+    safeGet(renderer, "flexColumns") != null
+      ? safeGet(safeGet(renderer["flexColumns"][0], "musicResponsiveListItemFlexColumnRenderer"), "text")
+      : safeGet(renderer, "title"),
+    null), "runs")
+                  ?? safeGet(safeGet(renderer, "title"), "runs")
+
+  var name = textFromRuns(titleRuns)
+  if (name == null) return null
+
+  var browseId = extractBrowseId(titleRuns)
+  if (browseId == null) return null
+
+  var images = parseThumbnails(
+    safeGet(renderer, "thumbnail") ?? safeGet(renderer, "thumbnailRenderer")
+  )
+
+  return {
+    "id":      browseId,
+    "name":    name,
+    "images":  images,
+    "genres":  [],
+    "followers": {"total": 0},
+    "external_urls": {"youtube": "https://music.youtube.com/channel/${browseId}"}
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Parse a Playlist (community or featured)
+// ─────────────────────────────────────────────────────────────────────────────
+fun parsePlaylist(renderer) {
+  if (renderer == null) return null
+
+  var titleRuns = null
+  var flexCols  = safeGet(renderer, "flexColumns")
+  if (flexCols != null && flexCols.length > 0) {
+    var col0  = safeGet(safeGet(flexCols[0], "musicResponsiveListItemFlexColumnRenderer"), "text")
+    titleRuns = safeGet(col0, "runs")
+  } else {
+    titleRuns = safeGet(safeGet(renderer, "title"), "runs")
+  }
+
+  var title = textFromRuns(titleRuns)
+  if (title == null) return null
+
+  var browseId = extractBrowseId(titleRuns)
+  if (browseId == null) return null
+
+  // Strip the "VL" prefix that YouTube Music adds to playlist browse IDs
+  var playlistId = browseId.startsWith("VL") ? browseId.substring(2) : browseId
+
+  var images = parseThumbnails(
+    safeGet(renderer, "thumbnail") ?? safeGet(renderer, "thumbnailRenderer")
+  )
+
+  return {
+    "id":            playlistId,
+    "name":          title,
+    "images":        images,
+    "description":   null,
+    "tracks":        {"total": 0, "items": [], "offset": 0, "limit": 0, "next": null},
+    "owner":         null,
+    "public":        true,
+    "collaborative": false,
+    "external_urls": {"youtube": "https://music.youtube.com/playlist?list=${playlistId}"}
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Walk the standard singleColumnBrowseResultsRenderer skeleton
+//  and return the inner sectionListRenderer contents array (or null).
+// ─────────────────────────────────────────────────────────────────────────────
+fun getSectionContents(response) {
+  var single = safeGet(safeGet(response, "contents"), "singleColumnBrowseResultsRenderer")
+  if (single == null) return null
+  var tabs = safeGet(single, "tabs")
+  if (tabs == null || tabs.length == 0) return null
+  var tabContent  = safeGet(safeGet(tabs[0], "tabRenderer"), "content")
+  var sectionList = safeGet(tabContent, "sectionListRenderer")
+  if (sectionList == null) return null
+  return safeGet(sectionList, "contents")
+}
+
