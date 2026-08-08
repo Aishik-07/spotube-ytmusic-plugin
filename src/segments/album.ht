@@ -149,6 +149,81 @@ class AlbumEndpoint {
       if (!lt.contains("new") && !lt.contains("album") && !lt.contains("release")) continue
 
       var contents = safeGet(carousel, "contents") ?? []
+      // FIX: was for(i; i < end; ...) — invalid Hetu; use while instead
+      var i   = offset < contents.length ? offset : contents.length
+      var end = (offset + limit) < contents.length ? (offset + limit) : contents.length
+
+      while (i < end) {
+        var r = safeGet(contents[i], "musicTwoRowItemRenderer")
+        if (r != null) {
+          var a = parseAlbum(r)
+          if (a != null) albums.add(a)
+        }
+        i = i + 1
+      }
+      break
+    }
+    return albums
+  }
+
+  fun _slice(list, offset, limit) {
+    var out = []
+    // FIX: was for(i; i < end; ...) — invalid Hetu; use while instead
+    var i   = offset < list.length ? offset : list.length
+    var end = (offset + limit) < list.length ? (offset + limit) : list.length
+    while (i < end) {
+      out.add(list[i])
+      i = i + 1
+    }
+    return out
+  }
+}
+      "id":           id,
+      "name":         title,
+      "release_date": year,
+      "total_tracks": albumTracks.length,
+      "images":       images,
+      "artists":      artists,
+      "album_type":   albumType,
+      "tracks":       makePagination(albumTracks, albumTracks.length, 0, albumTracks.length, null),
+      "external_urls": {"youtube": "https://music.youtube.com/browse/${id}"}
+    }
+  }
+
+  fun _parseAlbumTracks(resp) {
+    var tracks   = []
+    var sections = getSectionContents(resp)
+    if (sections == null) return tracks
+
+    for (var section in sections) {
+      var shelf    = safeGet(section, "musicShelfRenderer")
+      if (shelf == null) continue
+      var contents = safeGet(shelf, "contents") ?? []
+      for (var item in contents) {
+        var r = safeGet(item, "musicResponsiveListItemRenderer")
+        if (r == null) continue
+        var t = parseTrack(r)
+        if (t != null) tracks.add(t)
+      }
+      break
+    }
+    return tracks
+  }
+
+  fun _extractAlbumsFromBrowse(resp, offset, limit) {
+    var albums   = []
+    var sections = getSectionContents(resp)
+    if (sections == null) return albums
+
+    for (var section in sections) {
+      var carousel = safeGet(section, "musicCarouselShelfRenderer")
+      if (carousel == null) continue
+      var hdr    = safeGet(safeGet(carousel, "header"), "musicCarouselShelfBasicHeaderRenderer")
+      var hTitle = textFromRuns(safeGet(safeGet(hdr, "title"), "runs")) ?? ""
+      var lt     = hTitle.toLowerCase()
+      if (!lt.contains("new") && !lt.contains("album") && !lt.contains("release")) continue
+
+      var contents = safeGet(carousel, "contents") ?? []
       var i   = offset < contents.length ? offset : contents.length
       var end = (offset + limit) < contents.length ? (offset + limit) : contents.length
 
