@@ -1,0 +1,33 @@
+PLUGIN_NAME  := youtube-music
+ENTRY        := src/segments/main.ht
+OUTPUT       := $(PLUGIN_NAME).smplug
+HETU_TOOLS   := hetu_script_dev_tools
+
+# ───────────────────────────────────────
+#  Build the compiled plugin bundle
+# ───────────────────────────────────────
+.PHONY: build
+build:
+	$(HETU_TOOLS) compile $(ENTRY) -o $(OUTPUT)
+	@echo "✅  Built $(OUTPUT)"
+
+# ───────────────────────────────────────
+#  Run the example Flutter app for local testing
+# ───────────────────────────────────────
+.PHONY: run
+run:
+	flutter run example/lib/main.dart
+
+# ───────────────────────────────────────
+#  Wipe compiled artefact
+# ───────────────────────────────────────
+.PHONY: clean
+clean:
+	rm -f $(OUTPUT)
+	@echo "🗑  Cleaned build artefacts"
+
+# ───────────────────────────────────────
+#  Shortcut: clean then build
+# ───────────────────────────────────────
+.PHONY: rebuild
+rebuild: clean build
