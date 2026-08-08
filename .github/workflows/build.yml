@@ -29,5 +29,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: youtube-music-plugin
-          path: youtube-music.smplug
+          # This tells GitHub to search every single folder for the file
+          path: |
+            **/*.smplug
+            **/*.bytes
+
           
