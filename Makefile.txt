@@ -1,7 +1,7 @@
 PLUGIN_NAME  := youtube-music
 ENTRY        := src/segments/main.ht
 OUTPUT       := $(PLUGIN_NAME).smplug
-HETU_TOOLS   := hetu_script_dev_tools
+HETU_TOOLS   := hetu
 
 # ───────────────────────────────────────
 #  Build the compiled plugin bundle
