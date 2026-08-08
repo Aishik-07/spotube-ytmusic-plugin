@@ -3,7 +3,7 @@ name: Build Spotube Plugin
 on:
   push:
     branches: [ "main", "master" ]
-  workflow_dispatch: 
+  workflow_dispatch:
 
 jobs:
   build:
@@ -23,15 +23,9 @@ jobs:
         run: |
           export PATH="$HOME/.pub-cache/bin:$PATH"
           make build
-          
 
       - name: Upload .smplug Artifact
         uses: actions/upload-artifact@v4
         with:
           name: youtube-music-plugin
-          # This tells GitHub to search every single folder for the file
-          path: |
-            **/*.smplug
-            **/*.bytes
-
-          
+          path: "*.smplug"
