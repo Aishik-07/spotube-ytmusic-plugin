@@ -1,0 +1,30 @@
+name: Build Spotube Plugin
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch: 
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Dart SDK
+        uses: dart-lang/setup-dart@v1.6.0
+
+      - name: Install Hetu Script Dev Tools
+        run: dart pub global activate hetu_script_dev_tools
+
+      - name: Compile the Plugin
+        run: make build
+
+      - name: Upload .smplug Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: youtube-music-plugin
+          path: youtube-music.smplug
+          
