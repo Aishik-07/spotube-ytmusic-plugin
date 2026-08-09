@@ -1,0 +1,40 @@
+// src/segments/main.ht
+// Entry point — imports every endpoint class, then wires them into the single
+// YoutubeMusic class that matches the "entryPoint" in plugin.json.
+import "module:spotube_plugin" as spotube
+
+import "auth.ht"
+import "user.ht"
+import "track.ht"
+import "album.ht"
+import "artist.ht"
+import "playlist.ht"
+import "search.ht"
+import "browse.ht"
+import "core.ht"
+
+class YoutubeMusic {
+  var client
+  var auth
+  var user
+  var track
+  var album
+  var artist
+  var playlist
+  var search
+  var browse
+  var core
+
+  construct() {
+    client   = spotube.HttpClient()
+    auth     = AuthEndpoint(client)
+    user     = UserEndpoint(client)
+    track    = TrackEndpoint(client)
+    album    = AlbumEndpoint(client)
+    artist   = ArtistEndpoint(client)
+    playlist = PlaylistEndpoint(client)
+    search   = SearchEndpoint(client)
+    browse   = BrowseEndpoint(client)
+    core     = CorePlugin(client)
+  }
+}

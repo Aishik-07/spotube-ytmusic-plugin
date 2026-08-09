@@ -1,0 +1,197 @@
+// ─────────────────────────────────────────────────────────────────────────────
+//  src/segments/user.ht
+//  UserEndpoint — user profile + personal library
+//
+//  FIXES vs first draft
+//  ────────────────────
+//  • for (i; i < end; ...) → while (i < end) everywhere (for-init must be a
+//    var declaration in hetu_script; plain expressions are rejected).
+//  • spotube.Future.value(false) → getStoredCookies().then((_) => false)
+//    because 'spotube' is the spotube_plugin alias, not a Future factory.
+// ─────────────────────────────────────────────────────────────────────────────
+import "../utils/api.ht"
+import "../utils/parser.ht"
+import "module:spotube_plugin" as spotube
+
+class UserEndpoint {
+  var client
+
+  construct(this.client) {}
+
+  fun _cookies() {
+    return getStoredCookies()
+  }
+
+  fun _post(endpoint, body) {
+    return _cookies().then((cookies) {
+      return ytPost(client, endpoint, body, cookies)
+    })
+  }
+
+  // ── me() ─────────────────────────────────────────────────────────────────
+  fun me() {
+    return _cookies().then((cookies) {
+      return client.get(
+        "https://www.googleapis.com/oauth2/v3/userinfo",
+        headers: makeHeaders(cookies)
+      ).then((resp) {
+        if (resp == null) return null
+        var images = []
+        var pic = resp["picture"]
+        if (pic != null && pic != "") {
+          images.add({"url": pic, "width": 96, "height": 96})
+        }
+        return {
+          "id":           resp["sub"]  ?? "unknown",
+          "display_name": resp["name"] ?? "YouTube Music User",
+          "images":       images,
+          "email":        resp["email"]
+        }
+      })
+    })
+  }
+
+  // ── savedTracks() ─────────────────────────────────────────────────────────
+  fun savedTracks({offset, limit}) {
+    offset = offset ?? 0
+    limit  = limit  ?? 50
+    return _post("browse", {"browseId": BROWSE_LIKED_SONGS}).then((resp) {
+      if (resp == null) return makePagination([], 0, offset, limit, null)
+      var items = _extractShelfTracks(resp, offset, limit)
+      return makePagination(items, items.length + offset, offset, limit, null)
+    })
+  }
+
+  // ── savedPlaylists() ──────────────────────────────────────────────────────
+  fun savedPlaylists({offset, limit}) {
+    offset = offset ?? 0
+    limit  = limit  ?? 50
+    return _post("browse", {"browseId": BROWSE_LIKED_PLAYLISTS}).then((resp) {
+      if (resp == null) return makePagination([], 0, offset, limit, null)
+      var items = _extractGridItems(resp, parsePlaylist, offset, limit)
+      return makePagination(items, items.length + offset, offset, limit, null)
+    })
+  }
+
+  // ── savedAlbums() ─────────────────────────────────────────────────────────
+  fun savedAlbums({offset, limit}) {
+    offset = offset ?? 0
+    limit  = limit  ?? 50
+    return _post("browse", {"browseId": BROWSE_LIBRARY_ALBUMS}).then((resp) {
+      if (resp == null) return makePagination([], 0, offset, limit, null)
+      var items = _extractGridItems(resp, parseAlbum, offset, limit)
+      return makePagination(items, items.length + offset, offset, limit, null)
+    })
+  }
+
+  // ── savedArtists() ────────────────────────────────────────────────────────
+  fun savedArtists({offset, limit}) {
+    offset = offset ?? 0
+    limit  = limit  ?? 50
+    return _post("browse", {"browseId": BROWSE_LIBRARY_ARTISTS}).then((resp) {
+      if (resp == null) return makePagination([], 0, offset, limit, null)
+      var items = _extractGridItems(resp, parseArtist, offset, limit)
+      return makePagination(items, items.length + offset, offset, limit, null)
+    })
+  }
+
+  // ── Presence checks (not queryable without fetching full library) ─────────
+  //  FIX: use getStoredCookies().then(...) instead of spotube.Future.value()
+  fun isSavedPlaylist(playlistId) {
+    return getStoredCookies().then((_) => false)
+  }
+  fun isSavedTracks(trackIds) {
+    return getStoredCookies().then((_) {
+      var result = []
+      for (var id in trackIds) result.add(false)
+      return result
+    })
+  }
+  fun isSavedAlbums(albumIds) {
+    return getStoredCookies().then((_) {
+      var result = []
+      for (var id in albumIds) result.add(false)
+      return result
+    })
+  }
+  fun isSavedArtists(artistIds) {
+    return getStoredCookies().then((_) {
+      var result = []
+      for (var id in artistIds) result.add(false)
+      return result
+    })
+  }
+
+  // ── Private helpers ───────────────────────────────────────────────────────
+
+  fun _extractShelfTracks(resp, offset, limit) {
+    var tracks   = []
+    var sections = getSectionContents(resp)
+    if (sections == null) return tracks
+
+    for (var section in sections) {
+      var shelf = safeGet(section, "musicShelfRenderer")
+      if (shelf == null) continue
+      var contents = safeGet(shelf, "contents") ?? []
+
+      // FIX: use while instead of for (i; ...)
+      var i   = offset < contents.length ? offset : contents.length
+      var end = (offset + limit) < contents.length ? (offset + limit) : contents.length
+      while (i < end) {
+        var renderer = safeGet(contents[i], "musicResponsiveListItemRenderer")
+        if (renderer != null) {
+          var track = parseTrack(renderer)
+          if (track != null) tracks.add(track)
+        }
+        i = i + 1
+      }
+      break
+    }
+    return tracks
+  }
+
+  fun _extractGridItems(resp, parseFun, offset, limit) {
+    var out      = []
+    var sections = getSectionContents(resp)
+    if (sections == null) return out
+
+    for (var section in sections) {
+      var grid = safeGet(section, "gridRenderer")
+      if (grid != null) {
+        var gridItems = safeGet(grid, "items") ?? []
+        // FIX: while loop
+        var i   = offset < gridItems.length ? offset : gridItems.length
+        var end = (offset + limit) < gridItems.length ? (offset + limit) : gridItems.length
+        while (i < end) {
+          var r = safeGet(gridItems[i], "musicTwoRowItemRenderer")
+               ?? safeGet(gridItems[i], "musicResponsiveListItemRenderer")
+          if (r != null) {
+            var parsed = parseFun(r)
+            if (parsed != null) out.add(parsed)
+          }
+          i = i + 1
+        }
+        break
+      }
+
+      var shelf = safeGet(section, "musicShelfRenderer")
+      if (shelf != null) {
+        var contents = safeGet(shelf, "contents") ?? []
+        // FIX: while loop
+        var i   = offset < contents.length ? offset : contents.length
+        var end = (offset + limit) < contents.length ? (offset + limit) : contents.length
+        while (i < end) {
+          var r = safeGet(contents[i], "musicResponsiveListItemRenderer")
+               ?? safeGet(contents[i], "musicTwoRowItemRenderer")
+          if (r != null) {
+            var parsed = parseFun(r)
+            if (parsed != null) out.add(parsed)
+          }
+          i = i + 1
+        }
+        break
+      }
+    }
+    return out
+  }
+}

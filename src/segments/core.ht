@@ -1,0 +1,73 @@
+// src/segments/core.ht — Update check and plugin metadata
+import "../utils/api.ht"
+import "module:spotube_plugin" as spotube
+
+class CorePlugin {
+  var client
+  var _repo = "Aishik-07/spotube-ytmusic-plugin"
+
+  construct(this.client) {}
+
+  // Called by Spotube to check for new releases
+  fun checkUpdate(currentConfig) {
+    var currentVersion = currentConfig["version"] ?? "1.0.0"
+
+    return client.get(
+      "https://api.github.com/repos/${_repo}/releases/latest",
+      headers: {
+        "Accept":     "application/vnd.github.v3+json",
+        "User-Agent": "spotube-ytmusic-plugin"
+      }
+    ).then((resp) {
+      if (resp == null) return null
+
+      var tagName        = resp["tag_name"] ?? ""
+      var latestVersion  = tagName.startsWith("v") ? tagName.substring(1) : tagName
+      if (latestVersion == "" || latestVersion == currentVersion) return null
+
+      var assets      = resp["assets"] ?? []
+      var downloadUrl = null
+      for (var asset in assets) {
+        var name = asset["name"] ?? ""
+        if (name.endsWith(".smplug")) {
+          downloadUrl = asset["browser_download_url"]
+          break
+        }
+      }
+      if (downloadUrl == null) return null
+
+      return {
+        "downloadUrl": downloadUrl,
+        "version":     latestVersion,
+        "changelog":   resp["body"] ?? "See GitHub release notes."
+      }
+    })
+  }
+
+  get support => """
+# YouTube Music — Spotube Plugin
+
+## What it does
+• Search tracks, albums, artists and playlists across YouTube Music's full catalogue
+• Browse the YouTube Music home page (personalised when signed in)
+• Sign in with your Google account to access your liked songs, playlists & library
+• Radio / related-track queue for any track
+• Playlist creation, editing and track management
+
+## Sign-in
+Tap the account icon → Sign In → a full Google login page opens inside the app.
+After signing in you will be redirected to YouTube Music and the session will be
+captured automatically.  Sessions last months; you will rarely need to re-authenticate.
+
+## Limitations
+• "Is saved?" checks always return false (no efficient API without fetching the full library).
+• Artist follow / album save are not exposed by YouTube Music's API.
+• Audio streams are handled by Spotube's own engine — this plugin is metadata-only.
+
+## Issues & updates
+https://github.com/${_repo}/issues
+"""
+
+  // Scrobbling is not supported (this is a metadata-only plugin)
+  fun scrobble(details) { return null }
+}

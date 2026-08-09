@@ -1,0 +1,134 @@
+// src/segments/browse.ht — Home page sections and section-drill-through
+import "../utils/api.ht"
+import "../utils/parser.ht"
+
+class BrowseEndpoint {
+  var client
+
+  construct(this.client) {}
+
+  fun _cookies() { return getStoredCookies() }
+
+  // Returns a paginated list of SpotubeBrowseSectionObject
+  fun sections({offset, limit}) {
+    offset = offset ?? 0
+    limit  = limit  ?? 10
+    return _cookies().then((cookies) {
+      return ytPost(client, "browse", {"browseId": BROWSE_HOME}, cookies).then((resp) {
+        if (resp == null) return makePagination([], 0, offset, limit, null)
+        var all  = _parseHomeSections(resp)
+        var page = _slice(all, offset, limit)
+        return makePagination(page, all.length, offset, limit, null)
+      })
+    })
+  }
+
+  // Drill into a specific browse ID (e.g. a "More" link from a section)
+  fun sectionItems(id, {offset, limit}) {
+    offset = offset ?? 0
+    limit  = limit  ?? 20
+    return _cookies().then((cookies) {
+      return ytPost(client, "browse", {"browseId": id}, cookies).then((resp) {
+        if (resp == null) return makePagination([], 0, offset, limit, null)
+        var items = _parseBrowseGridItems(resp)
+        var page  = _slice(items, offset, limit)
+        return makePagination(page, items.length + offset, offset, limit, null)
+      })
+    })
+  }
+
+  // ── private ───────────────────────────────────────────────────────────────
+
+  fun _parseHomeSections(resp) {
+    var sectionList = []
+    var sections    = getSectionContents(resp)
+    if (sections == null) return sectionList
+
+    for (var section in sections) {
+      var carousel = safeGet(section, "musicCarouselShelfRenderer")
+               ?? safeGet(section, "musicImmersiveCarouselShelfRenderer")
+      if (carousel == null) continue
+      var parsed = _parseCarousel(carousel)
+      if (parsed != null) sectionList.add(parsed)
+    }
+    return sectionList
+  }
+
+  fun _parseCarousel(carousel) {
+    var header    = safeGet(carousel, "header")
+    var hdrRender = safeGet(header, "musicCarouselShelfBasicHeaderRenderer")
+                 ?? safeGet(header, "musicImmersiveCarouselShelfBasicHeaderRenderer")
+    if (hdrRender == null) return null
+
+    var title     = textFromRuns(safeGet(safeGet(hdrRender, "title"), "runs")) ?? "Featured"
+    var sectionId = title.toLowerCase().replaceAll(" ", "_")
+
+    var moreBtn  = safeGet(safeGet(hdrRender, "moreContentButton"), "buttonRenderer")
+    var moreId   = null
+    if (moreBtn != null) {
+      moreId = safeGet(safeGet(safeGet(moreBtn, "navigationEndpoint"), "browseEndpoint"), "browseId")
+    }
+
+    var items    = []
+    var contents = safeGet(carousel, "contents") ?? []
+    for (var content in contents) {
+      var r = safeGet(content, "musicTwoRowItemRenderer")
+      if (r == null) continue
+      var item = _parseCarouselItem(r)
+      if (item != null) items.add(item)
+    }
+
+    return {
+      "id": sectionId, "title": title,
+      "items": items, "browseMore": moreId != null
+    }
+  }
+
+  fun _parseCarouselItem(r) {
+    var titleRuns = safeGet(safeGet(r, "title"), "runs") ?? []
+    var title     = textFromRuns(titleRuns)
+    if (title == null) return null
+
+    var browseId  = extractBrowseId(titleRuns)
+    if (browseId == null) return null
+
+    var images = parseThumbnails(safeGet(r, "thumbnailRenderer") ?? safeGet(r, "thumbnail"))
+
+    if (browseId.startsWith("MPRE")) {
+      var a = parseAlbum(r)
+      return a != null ? {"type": "album",    "data": a} : null
+    } else if (browseId.startsWith("UC") || browseId.startsWith("MPLA")) {
+      var ar = parseArtist(r)
+      return ar != null ? {"type": "artist",   "data": ar} : null
+    } else {
+      var pl = parsePlaylist(r)
+      return pl != null ? {"type": "playlist", "data": pl} : null
+    }
+  }
+
+  fun _parseBrowseGridItems(resp) {
+    var items    = []
+    var sections = getSectionContents(resp)
+    if (sections == null) return items
+    for (var section in sections) {
+      var grid = safeGet(section, "gridRenderer")
+      if (grid == null) continue
+      var gridItems = safeGet(grid, "items") ?? []
+      for (var gi in gridItems) {
+        var r = safeGet(gi, "musicTwoRowItemRenderer")
+        if (r == null) continue
+        var parsed = _parseCarouselItem(r)
+        if (parsed != null) items.add(parsed)
+      }
+    }
+    return items
+  }
+
+  fun _slice(list, offset, limit) {
+    var out = []
+    var i   = offset < list.length ? offset : list.length
+    var end = (offset + limit) < list.length ? (offset + limit) : list.length
+    while (i < end) { out.add(list[i]); i = i + 1 }
+    return out
+  }
+}
