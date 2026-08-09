@@ -12,7 +12,6 @@ import "browse.ht"
 import "core.ht"
 
 class YoutubeMusic {
-  var client
   var auth
   var user
   var track
@@ -23,9 +22,13 @@ class YoutubeMusic {
   var browse
   var core
 
-  // Spotube creates the HttpClient and passes it here.
-  // Do NOT call spotube.HttpClient() — it does not exist.
-  construct(this.client) {
+  var client
+
+  // Spotube calls construct() with NO arguments.
+  // HttpClient and HttpBaseOptions are globally available from hetu_std —
+  // do NOT prefix them with spotube. or std.
+  construct() {
+    client   = HttpClient(HttpBaseOptions(baseUrl: "https://music.youtube.com"))
     auth     = AuthEndpoint(client)
     user     = UserEndpoint(client)
     track    = TrackEndpoint(client)
