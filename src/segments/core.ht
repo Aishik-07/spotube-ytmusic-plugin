@@ -1,0 +1,25 @@
+// src/segments/core.ht — update check and plugin metadata
+// FIX: triple-quoted strings (""") are not valid in hetu_script — replaced
+//      with a single-line string. checkUpdate removed client.get() call.
+import "../utils/api.ht"
+import "module:spotube_plugin" as spotube
+
+class CorePlugin {
+  var client
+  var _repo = "Aishik-07/spotube-ytmusic-plugin"
+
+  construct(this.client) {}
+
+  // checkUpdate — client.get() is illegal in hetu_script ('get' is a keyword).
+  // Returning null disables the in-app update prompt; users can check GitHub.
+  fun checkUpdate(currentConfig) {
+    return null
+  }
+
+  // Single-line string only — hetu_script does not support triple-quoted strings
+  get support => "YouTube Music for Spotube. Features: search, browse, liked songs, playlists, albums, artists, radio, Google account sign-in. Limitations: isSaved checks return false, artist follow/album save not available via API. Report issues: https://github.com/Aishik-07/spotube-ytmusic-plugin/issues"
+
+  fun scrobble(details) {
+    return null
+  }
+}
