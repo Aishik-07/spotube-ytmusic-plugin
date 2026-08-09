@@ -95,7 +95,7 @@ class UserEndpoint {
   fun isSavedTracks(trackIds) {
     return getStoredCookies().then((_) {
       var result = []
-      for (var id in trackIds) result.add(false)
+      for (var id in trackIds) {result.add(false)}
       return result
     })
   }
@@ -103,7 +103,7 @@ class UserEndpoint {
   fun isSavedAlbums(albumIds) {
     return getStoredCookies().then((_) {
       var result = []
-      for (var id in albumIds) result.add(false)
+      for (var id in albumIds) {result.add(false)}
       return result
     })
   }
@@ -111,7 +111,7 @@ class UserEndpoint {
   fun isSavedArtists(artistIds) {
     return getStoredCookies().then((_) {
       var result = []
-      for (var id in artistIds) result.add(false)
+      for (var id in artistIds) {result.add(false)}
       return result
     })
   }
