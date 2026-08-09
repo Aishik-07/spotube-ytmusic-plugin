@@ -1,0 +1,73 @@
+// src/utils/api.ht — YouTube Music InnerTube API constants & helpers
+// NOTE: client.get() is NOT used anywhere — hetu_script reserves 'get' as a
+//       keyword, so '.get(' is a syntax error. Every HTTP call uses POST.
+import "module:spotube_plugin" as spotube
+
+let API_KEY  = "AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX30"
+let API_BASE = "https://music.youtube.com/youtubei/v1"
+
+let SEARCH_SONGS      = "EgWKAQIIAWoKEAkQBRAKEAMQBA=="
+let SEARCH_ALBUMS     = "EgWKAQIYAWoKEAkQBRAKEAMQBA=="
+let SEARCH_ARTISTS    = "EgWKAQIgAWoKEAkQBRAKEAMQBA=="
+let SEARCH_PLAYLISTS  = "EgWKAQIoAWoKEAkQBRAKEAMQBA=="
+
+let BROWSE_HOME            = "FEmusic_home"
+let BROWSE_CHARTS          = "FEmusic_charts"
+let BROWSE_LIKED_SONGS     = "FEmusic_liked_videos"
+let BROWSE_LIKED_PLAYLISTS = "FEmusic_liked_playlists"
+let BROWSE_LIBRARY_ARTISTS = "FEmusic_library_privately_likes_artists"
+let BROWSE_LIBRARY_ALBUMS  = "FEmusic_library_privately_likes_albums"
+
+fun makeContext() {
+  return {
+    "client": {
+      "clientName":    "WEB_REMIX",
+      "clientVersion": "1.20241112.01.00",
+      "hl": "en",
+      "gl": "US",
+      "platform": "DESKTOP",
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
+  }
+}
+
+fun makeHeaders(cookieStr) {
+  var headers = {
+    "Content-Type":              "application/json",
+    "X-Goog-Api-Format-Version": "1",
+    "Accept":                    "*/*",
+    "Accept-Language":           "en-US,en;q=0.9",
+    "Origin":                    "https://music.youtube.com",
+    "Referer":                   "https://music.youtube.com/",
+    "User-Agent":                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+  }
+  if (cookieStr != null && cookieStr != "") {
+    headers["Cookie"]          = cookieStr
+    headers["X-Goog-AuthUser"] = "0"
+    headers["X-Origin"]        = "https://music.youtube.com"
+  }
+  return headers
+}
+
+fun ytPost(client, endpoint, body, cookieStr) {
+  let url = "${API_BASE}/${endpoint}?key=${API_KEY}&prettyPrint=false"
+  body["context"] = makeContext()
+  return client.post(url, headers: makeHeaders(cookieStr), body: body)
+}
+
+fun getStoredCookies() {
+  return spotube.LocalStorage.getString("ytmusic_cookies").then((v) {
+    if (v == null) return ""
+    return v
+  })
+}
+
+fun makePagination(items, total, offset, limit, next) {
+  return {
+    "items":  items,
+    "total":  total,
+    "offset": offset,
+    "limit":  limit,
+    "next":   next
+  }
+}
