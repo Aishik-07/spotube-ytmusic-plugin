@@ -1,0 +1,167 @@
+// ─────────────────────────────────────────────────────────────────────────────
+//  src/segments/track.ht
+//  TrackEndpoint — get track info, like / unlike, radio queue
+// ─────────────────────────────────────────────────────────────────────────────
+import "../utils/api.ht"
+import "../utils/parser.ht"
+
+class TrackEndpoint {
+  var client
+
+  construct(this.client) {}
+
+  fun _cookies() {
+    return getStoredCookies()
+  }
+
+  // ── getTrack(id) → SpotubeFullTrackObject ────────────────────────────────
+  // FIX: was "fun getTrack(id: string)" — parameter type annotations removed
+  fun getTrack(id) {
+    return _cookies().then((cookies) {
+      return ytPost(client, "player", {"videoId": id}, cookies).then((resp) {
+        if (resp == null) return null
+        return _fromPlayerResponse(resp)
+      })
+    })
+  }
+
+  // ── save(trackIds) — like tracks ──────────────────────────────────────────
+  fun save(trackIds) {
+    return _cookies().then((cookies) {
+      if (cookies == "") return null
+      for (var id in trackIds) {
+        ytPost(client, "like/like", {"target": {"videoId": id}}, cookies)
+      }
+      return null
+    })
+  }
+
+  // ── unsave(trackIds) — remove likes ───────────────────────────────────────
+  fun unsave(trackIds) {
+    return _cookies().then((cookies) {
+      if (cookies == "") return null
+      for (var id in trackIds) {
+        ytPost(client, "like/removelike", {"target": {"videoId": id}}, cookies)
+      }
+      return null
+    })
+  }
+
+  // ── radio(id) → List<SpotubeFullTrackObject> ──────────────────────────────
+  // FIX: was "fun radio(id: string)" — parameter type annotation removed
+  fun radio(id) {
+    return _cookies().then((cookies) {
+      return ytPost(client, "next", {
+        "videoId":                      id,
+        "enablePersistentPlaylistPanel": true,
+        "isAudioOnly":                  true
+      }, cookies).then((resp) {
+        if (resp == null) return []
+        return _parseRadioQueue(resp)
+      })
+    })
+  }
+
+  // ── Private: parse /player videoDetails into a track map ─────────────────
+  fun _fromPlayerResponse(resp) {
+    var vd = safeGet(resp, "videoDetails")
+    if (vd == null) return null
+
+    var videoId = vd["videoId"] ?? ""
+    var title   = vd["title"]   ?? "Unknown"
+    var author  = vd["author"]  ?? "Unknown Artist"
+    var lenSec  = vd["lengthSeconds"] ?? "0"
+    var dms     = int.parse(lenSec) * 1000
+
+    var rawThumbs = safeGet(safeGet(vd, "thumbnail"), "thumbnails") ?? []
+    var images    = []
+    for (var t in rawThumbs) {
+      images.add({
+        "url":    t["url"]    ?? "",
+        "width":  t["width"]  ?? 226,
+        "height": t["height"] ?? 226
+      })
+    }
+
+    return {
+      "id":           videoId,
+      "name":         title,
+      "duration_ms":  dms,
+      "track_number": 1,
+      "disc_number":  1,
+      "artists": [{"id": "", "name": author, "images": [], "external_urls": {}}],
+      "album":        null,
+      "images":       images,
+      "explicit":     false,
+      "popularity":   0,
+      "is_local":     false,
+      "uri":          "youtube:track:${videoId}",
+      "external_urls": {"youtube": "https://music.youtube.com/watch?v=${videoId}"}
+    }
+  }
+
+  // ── Private: extract queue from /next response ────────────────────────────
+  fun _parseRadioQueue(resp) {
+    var tracks = []
+
+    var panel = safeGet(
+      safeGet(
+        safeGet(
+          safeGet(safeGet(resp, "contents"), "singleColumnMusicWatchNextResultsRenderer"),
+          "playlist"
+        ),
+        "playlistPanelRenderer"
+      ),
+      "contents"
+    )
+
+    if (panel == null) return tracks
+
+    for (var item in panel) {
+      var renderer = safeGet(item, "playlistPanelVideoRenderer")
+      if (renderer == null) continue
+      var track = _fromPanelRenderer(renderer)
+      if (track != null) tracks.add(track)
+      if (tracks.length >= 50) break
+    }
+
+    return tracks
+  }
+
+  fun _fromPanelRenderer(r) {
+    var videoId = safeGet(r, "videoId")
+    if (videoId == null) return null
+
+    var title   = textFromRuns(safeGet(safeGet(r, "title"),           "runs")) ?? "Unknown"
+    var artist  = textFromRuns(safeGet(safeGet(r, "shortBylineText"), "runs")) ?? "Unknown Artist"
+    var lenRuns = safeGet(safeGet(r, "lengthText"), "runs") ?? []
+    var dms     = 0
+    if (lenRuns.length > 0) dms = durationToMs(lenRuns[0]["text"] ?? "")
+
+    var rawThumbs = safeGet(safeGet(r, "thumbnail"), "thumbnails") ?? []
+    var images    = []
+    for (var t in rawThumbs) {
+      images.add({
+        "url":    t["url"]    ?? "",
+        "width":  t["width"]  ?? 226,
+        "height": t["height"] ?? 226
+      })
+    }
+
+    return {
+      "id":           videoId,
+      "name":         title,
+      "duration_ms":  dms,
+      "track_number": 1,
+      "disc_number":  1,
+      "artists": [{"id": "", "name": artist, "images": [], "external_urls": {}}],
+      "album":        null,
+      "images":       images,
+      "explicit":     false,
+      "popularity":   0,
+      "is_local":     false,
+      "uri":          "youtube:track:${videoId}",
+      "external_urls": {"youtube": "https://music.youtube.com/watch?v=${videoId}"}
+    }
+  }
+}

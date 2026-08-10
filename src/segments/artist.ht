@@ -1,0 +1,165 @@
+// ─────────────────────────────────────────────────────────────────────────────
+//  src/segments/artist.ht
+//  ArtistEndpoint — artist overview, top tracks, discography, related artists
+// ─────────────────────────────────────────────────────────────────────────────
+import "../utils/api.ht"
+import "../utils/parser.ht"
+
+class ArtistEndpoint {
+  var client
+
+  construct(this.client) {}
+
+  fun _cookies() { return getStoredCookies() }
+
+  fun _browse(id) {
+    return _cookies().then((cookies) {
+      return ytPost(client, "browse", {"browseId": id}, cookies)
+    })
+  }
+
+  // ── getArtist(id) → SpotubeFullArtistObject ───────────────────────────────
+  fun getArtist(id: string) {
+    return _browse(id).then((resp) {
+      if (resp == null) return null
+      return _parseArtistPage(resp, id)
+    })
+  }
+
+  // ── related(id, …) → SpotubePaginationResponseObject<Artist> ─────────────
+  fun related(id: string, {offset, limit}) {
+    offset = offset ?? 0
+    limit  = limit  ?? 20
+
+    return _browse(id).then((resp) {
+      if (resp == null) return makePagination([], 0, offset, limit, null)
+      var all  = _extractCarouselItems(resp, ["similar", "fan", "related"], parseArtist)
+      var page = _slice(all, offset, limit)
+      return makePagination(page, all.length, offset, limit, null)
+    })
+  }
+
+  // ── topTracks(id, …) → SpotubePaginationResponseObject<Track> ────────────
+  fun topTracks(id: string, {limit, offset}) {
+    limit  = limit  ?? 10
+    offset = offset ?? 0
+
+    return _browse(id).then((resp) {
+      if (resp == null) return makePagination([], 0, offset, limit, null)
+      var tracks = _extractTopTracks(resp)
+      var page   = _slice(tracks, offset, limit)
+      return makePagination(page, tracks.length, offset, limit, null)
+    })
+  }
+
+  // ── albums(id, …) → SpotubePaginationResponseObject<Album> ───────────────
+  fun albums(id: string, {offset, limit}) {
+    offset = offset ?? 0
+    limit  = limit  ?? 20
+
+    return _browse(id).then((resp) {
+      if (resp == null) return makePagination([], 0, offset, limit, null)
+      var all  = _extractCarouselItems(resp, ["album", "single", "release", "discography"], parseAlbum)
+      var page = _slice(all, offset, limit)
+      return makePagination(page, all.length, offset, limit, null)
+    })
+  }
+
+  // ── save / unsave (subscribe / unsubscribe) — not accessible via InnerTube
+  fun save(artistIds)   { return null }
+  fun unsave(artistIds) { return null }
+
+  // ── Private ───────────────────────────────────────────────────────────────
+
+  fun _parseArtistPage(resp, id) {
+    var hdr    = safeGet(resp, "header")
+    var inner  = safeGet(hdr, "musicImmersiveHeaderRenderer")
+             ?? safeGet(hdr, "musicVisualHeaderRenderer")
+    if (inner == null) return null
+
+    var name   = textFromRuns(safeGet(safeGet(inner, "title"),       "runs")) ?? "Unknown Artist"
+    var desc   = textFromRuns(safeGet(safeGet(inner, "description"), "runs"))
+
+    var images = parseThumbnails(
+      safeGet(inner, "thumbnail") ?? safeGet(inner, "foregroundThumbnail")
+    )
+
+    return {
+      "id":        id,
+      "name":      name,
+      "images":    images,
+      "genres":    [],
+      "biography": desc,
+      "followers": {"total": 0},
+      "external_urls": {"youtube": "https://music.youtube.com/channel/${id}"}
+    }
+  }
+
+  // Walk every musicCarouselShelf and collect items whose shelf title matches
+  // at least one keyword.
+  fun _extractCarouselItems(resp, keywords, parseFun) {
+    var out      = []
+    var sections = getSectionContents(resp)
+    if (sections == null) return out
+
+    for (var section in sections) {
+      var carousel = safeGet(section, "musicCarouselShelfRenderer")
+      if (carousel == null) continue
+
+      var hdr    = safeGet(
+        safeGet(carousel, "header"), "musicCarouselShelfBasicHeaderRenderer"
+      )
+      var hTitle = textFromRuns(safeGet(safeGet(hdr, "title"), "runs")) ?? ""
+      var lt     = hTitle.toLowerCase()
+
+      var matched = false
+      for (var kw in keywords) {
+        if (lt.contains(kw)) { matched = true; break }
+      }
+      if (!matched) continue
+
+      var contents = safeGet(carousel, "contents") ?? []
+      for (var item in contents) {
+        var r = safeGet(item, "musicTwoRowItemRenderer")
+             ?? safeGet(item, "musicResponsiveListItemRenderer")
+        if (r == null) continue
+        var parsed = parseFun(r)
+        if (parsed != null) out.add(parsed)
+      }
+    }
+    return out
+  }
+
+  // The top songs shelf is usually the first musicShelfRenderer on the page.
+  fun _extractTopTracks(resp) {
+    var tracks   = []
+    var sections = getSectionContents(resp)
+    if (sections == null) return tracks
+
+    for (var section in sections) {
+      var shelf = safeGet(section, "musicShelfRenderer")
+      if (shelf == null) continue
+      var contents = safeGet(shelf, "contents") ?? []
+      for (var item in contents) {
+        var r = safeGet(item, "musicResponsiveListItemRenderer")
+        if (r == null) continue
+        var t = parseTrack(r)
+        if (t != null) tracks.add(t)
+      }
+      break
+    }
+    return tracks
+  }
+
+  fun _slice(list, offset, limit) {
+    var out = []
+    // FIX: was for(i; i < end; ...) — invalid Hetu syntax; use while instead
+    var i   = offset < list.length ? offset : list.length
+    var end = (offset + limit) < list.length ? (offset + limit) : list.length
+    while (i < end) {
+      out.add(list[i])
+      i = i + 1
+    }
+    return out
+  }
+}

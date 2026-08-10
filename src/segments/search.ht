@@ -1,0 +1,181 @@
+// ─────────────────────────────────────────────────────────────────────────────
+//  src/segments/search.ht
+//  SearchEndpoint — full-text search across tracks, albums, artists, playlists
+// ─────────────────────────────────────────────────────────────────────────────
+import "../utils/api.ht"
+import "../utils/parser.ht"
+
+class SearchEndpoint {
+  var client
+
+  construct(this.client) {}
+
+  fun _cookies() { return getStoredCookies() }
+
+  // ── chips: filter categories the UI can show as tabs ─────────────────────
+  get chips { return ["playlists"] }
+
+  // ── search(query, {offset, limit}) — searches all categories at once ──────
+  fun search(query, {offset, limit}) {
+    offset = offset ?? 0
+    limit  = limit  ?? 20
+    return _doSearch(query, null).then((resp) {
+      if (resp == null) {
+        return {
+          "tracks":    makePagination([], 0, offset, limit, null),
+          "albums":    makePagination([], 0, offset, limit, null),
+          "artists":   makePagination([], 0, offset, limit, null),
+          "playlists": makePagination([], 0, offset, limit, null)
+        }
+      }
+      return _parseSearchResponse(resp, offset, limit)
+    })
+  }
+
+  // ── searchTracks(query, {offset, limit}) ──────────────────────────────────
+  fun searchTracks(query, {offset, limit}) {
+    offset = offset ?? 0
+    limit  = limit  ?? 20
+    return _doSearch(query, SEARCH_SONGS).then((resp) {
+      if (resp == null) return makePagination([], 0, offset, limit, null)
+      var items = _parseSingleType(resp, parseTrack, offset, limit)
+      return makePagination(items, items.length + offset, offset, limit, null)
+    })
+  }
+
+  // ── searchAlbums(query, {offset, limit}) ──────────────────────────────────
+  fun searchAlbums(query, {offset, limit}) {
+    offset = offset ?? 0
+    limit  = limit  ?? 20
+    return _doSearch(query, SEARCH_ALBUMS).then((resp) {
+      if (resp == null) return makePagination([], 0, offset, limit, null)
+      var items = _parseSingleType(resp, parseAlbum, offset, limit)
+      return makePagination(items, items.length + offset, offset, limit, null)
+    })
+  }
+
+  // ── searchArtists(query, {offset, limit}) ─────────────────────────────────
+  fun searchArtists(query, {offset, limit}) {
+    offset = offset ?? 0
+    limit  = limit  ?? 20
+    return _doSearch(query, SEARCH_ARTISTS).then((resp) {
+      if (resp == null) return makePagination([], 0, offset, limit, null)
+      var items = _parseSingleType(resp, parseArtist, offset, limit)
+      return makePagination(items, items.length + offset, offset, limit, null)
+    })
+  }
+
+  // ── searchPlaylists(query, {offset, limit}) ───────────────────────────────
+  fun searchPlaylists(query, {offset, limit}) {
+    offset = offset ?? 0
+    limit  = limit  ?? 20
+    return _doSearch(query, SEARCH_PLAYLISTS).then((resp) {
+      if (resp == null) return makePagination([], 0, offset, limit, null)
+      var items = _parseSingleType(resp, parsePlaylist, offset, limit)
+      return makePagination(items, items.length + offset, offset, limit, null)
+    })
+  }
+
+  // ── Private ───────────────────────────────────────────────────────────────
+
+  fun _doSearch(query, params) {
+    return _cookies().then((cookies) {
+      var body = {"query": query}
+      if (params != null) body["params"] = params
+      return ytPost(client, "search", body, cookies)
+    })
+  }
+
+  // Parse a filtered search (one shelf of results)
+  fun _parseSingleType(resp, parseFun, offset, limit) {
+    var out      = []
+    var contents = _getTabContents(resp)
+    for (var section in contents) {
+      var shelf = safeGet(section, "musicShelfRenderer")
+      if (shelf == null) continue
+      var items = safeGet(shelf, "contents") ?? []
+      var i   = offset < items.length ? offset : items.length
+      var end = (offset + limit) < items.length ? (offset + limit) : items.length
+      while (i < end) {
+        var r = safeGet(items[i], "musicResponsiveListItemRenderer")
+        if (r != null) {
+          var parsed = parseFun(r)
+          if (parsed != null) out.add(parsed)
+        }
+        i = i + 1
+      }
+      break
+    }
+    return out
+  }
+
+  // Parse an unfiltered search — split shelves into categories by title
+  fun _parseSearchResponse(resp, offset, limit) {
+    var trackItems    = []
+    var albumItems    = []
+    var artistItems   = []
+    var playlistItems = []
+    var contents      = _getTabContents(resp)
+
+    for (var section in contents) {
+      var shelf = safeGet(section, "musicShelfRenderer")
+      if (shelf == null) continue
+      var title = textFromRuns(safeGet(safeGet(shelf, "title"), "runs")) ?? ""
+      var lt    = title.toLowerCase()
+      var items = safeGet(shelf, "contents") ?? []
+
+      for (var item in items) {
+        var r = safeGet(item, "musicResponsiveListItemRenderer")
+        if (r == null) continue
+
+        if (lt.contains("song") || lt.contains("video")) {
+          var t = parseTrack(r)
+          if (t != null) trackItems.add(t)
+        } else if (lt.contains("album") || lt.contains("single") || lt.contains("ep")) {
+          var a = parseAlbum(r)
+          if (a != null) albumItems.add(a)
+        } else if (lt.contains("artist")) {
+          var ar = parseArtist(r)
+          if (ar != null) artistItems.add(ar)
+        } else if (lt.contains("playlist") || lt.contains("community") || lt.contains("featured")) {
+          var pl = parsePlaylist(r)
+          if (pl != null) playlistItems.add(pl)
+        }
+      }
+    }
+
+    return {
+      "tracks":    makePagination(trackItems,    trackItems.length,    offset, limit, null),
+      "albums":    makePagination(albumItems,    albumItems.length,    offset, limit, null),
+      "artists":   makePagination(artistItems,   artistItems.length,   offset, limit, null),
+      "playlists": makePagination(playlistItems, playlistItems.length, offset, limit, null)
+    }
+  }
+
+  // Navigate the response structure to get shelf list regardless of format
+  fun _getTabContents(resp) {
+    // Direct sectionListRenderer
+    var sl = safeGet(resp, "sectionListRenderer")
+    if (sl != null) return safeGet(sl, "contents") ?? []
+
+    // Tabbed search results (unfiltered search)
+    var tabbed = safeGet(resp, "tabbedSearchResultsRenderer")
+    if (tabbed != null) {
+      var tabs = safeGet(tabbed, "tabs") ?? []
+      if (tabs.length > 0) {
+        var tab = safeGet(tabs[0], "tabRenderer")
+        if (tab != null) {
+          var content = safeGet(tab, "content")
+          var inner   = safeGet(content, "sectionListRenderer")
+          if (inner != null) return safeGet(inner, "contents") ?? []
+        }
+      }
+    }
+
+    // Contents at the top level
+    var topContents = safeGet(resp, "contents")
+    if (topContents != null) return topContents
+
+    return []
+  }
+}
